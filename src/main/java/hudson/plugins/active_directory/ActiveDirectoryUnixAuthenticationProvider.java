@@ -299,25 +299,27 @@ public class ActiveDirectoryUnixAuthenticationProvider extends AbstractActiveDir
             }
             LOGGER.fine("Found user "+username+" : "+user);
 
-            Object dn = user.get("distinguishedName").get();
-            if (dn==null)
-                throw new AuthenticationServiceException("No distinguished name for "+username);
+            Object userDistinguishedNameObject = user.get("distinguishedName").get();
+            if (userDistinguishedNameObject==null)
+                throw new AuthenticationServiceException("No DN  for "+ userDistinguishedNameObject);
+
+            String userDistinguishedName = userDistinguishedNameObject.toString();
 
             if (bindName!=null && password!=NO_AUTHENTICATION) {
                 // if we've used the credential specifically for the bind, we
                 // need to verify the provided password to do authentication
-                LOGGER.fine("Attempting to validate password for DN="+dn);
-                DirContext test = descriptor.bind(dn.toString(), password, ldapServers);
+                LOGGER.fine("Attempting to validate password for DN=" + userDistinguishedName);
+                DirContext test = descriptor.bind(userPrincipalName, password, ldapServers);
                 // Binding alone is not enough to test the credential. Need to actually perform some query operation.
                 // but if the authentication fails this throws an exception
                 try {
-                    new LDAPSearchBuilder(test,domainDN).searchOne("(& (userPrincipalName={0})(objectCategory=user))",userPrincipalName);
+                    new LDAPSearchBuilder(test,domainDN).subTreeScope().searchOne("(& (userPrincipalName={0})(objectCategory=user))", userPrincipalName);
                 } finally {
                     closeQuietly(test);
                 }
             }
 
-            Set<GrantedAuthority> groups = resolveGroups(domainDN, dn.toString(), context);
+            Set<GrantedAuthority> groups = resolveGroups(domainDN, userDistinguishedName, context);
             groups.add(SecurityRealm.AUTHENTICATED_AUTHORITY);
 
             return new ActiveDirectoryUserDetail(username, password, true, true, true, true, groups.toArray(new GrantedAuthority[groups.size()]),
