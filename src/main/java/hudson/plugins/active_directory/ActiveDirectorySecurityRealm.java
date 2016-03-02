@@ -50,6 +50,7 @@ import org.acegisecurity.userdetails.UserDetails;
 import org.acegisecurity.userdetails.UserDetailsService;
 import org.acegisecurity.userdetails.UsernameNotFoundException;
 import org.apache.commons.io.IOUtils;
+import org.codehaus.mojo.animal_sniffer.IgnoreJRERequirement;
 import org.kohsuke.stapler.DataBoundConstructor;
 import org.kohsuke.stapler.QueryParameter;
 import org.kohsuke.stapler.StaplerRequest;
@@ -478,7 +479,8 @@ public class ActiveDirectorySecurityRealm extends AbstractPasswordBasedSecurityR
              customizeLdapProperty(props, "com.sun.jndi.ldap.connect.timeout");
              customizeLdapProperty(props, "com.sun.jndi.ldap.read.timeout");
         }
-        
+
+        @IgnoreJRERequirement
         private LdapContext bind(String principalName, String password, SocketInfo server, Hashtable<String, String> props) throws NamingException {
             String ldapUrl = (FORCE_LDAPS?"ldaps://":"ldap://") + server + '/';
             String oldName = Thread.currentThread().getName();
