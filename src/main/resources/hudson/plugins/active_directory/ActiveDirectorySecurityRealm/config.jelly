@@ -8,7 +8,7 @@
           <f:optionalBlock title="${%Specify custom Active Directory domain name}"
                            inline="true" name="customDomain" checked="${instance.domains!=null}"
                            help="/plugin/active-directory/help/domain-name-windows.html">
-            <f:entry field="domains" title="${%Domains}">
+            <f:entry field="domains" title="${%Domains}" help="/plugin/active-directory/help/domain-name-unix.html">
               <f:repeatable field="domains" add="${%Add Domain}">
                 <table width="100%">
                   <br/>
@@ -18,7 +18,10 @@
                   <f:entry title="${%Domain controller}" field="servers">
                     <f:textbox />
                   </f:entry>
-                  <f:entry field="bindName" title="${%Bind DN}">
+                  <f:entry title="${%Site}" field="site" help="/plugin/active-directory/help/help-site.html">
+                    <f:textbox />
+                  </f:entry>
+                  <f:entry field="bindName" title="${%Bind DN}" help="/plugin/active-directory/help/help-bindName.html">
                     <f:textbox />
                   </f:entry>
                   <f:entry field="bindPassword" title="${%Bind Password}">
@@ -37,14 +40,17 @@
     </j:when>
     <j:otherwise>
       <!-- code path for ActiveDirectoryUnixAuthenticationProvider: running on Unix -->
-      <f:entry field="domains" title="${%Domains}">
+      <f:entry field="domains" title="${%Domains}" help="/plugin/active-directory/help/domain-name-unix.html">
         <f:repeatable field="domains" add="${%Add Domain}">
           <table width="100%">
             <br/>
-            <f:entry title="${%Domain Name}" field="name" help="/plugin/active-directory/help/domain-name-unix.html">
+            <f:entry title="${%Domain Name}" field="name">
               <f:textbox />
             </f:entry>
             <f:entry title="${%Domain controller}" field="servers">
+              <f:textbox />
+            </f:entry>
+            <f:entry title="${%Site}" field="site" help="/plugin/active-directory/help/help-site.html">
               <f:textbox />
             </f:entry>
             <f:entry field="bindName" title="${%Bind DN}" help="/plugin/active-directory/help/help-bindName.html">

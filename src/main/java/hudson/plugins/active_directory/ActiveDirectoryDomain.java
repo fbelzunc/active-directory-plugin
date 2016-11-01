@@ -74,12 +74,22 @@ public class ActiveDirectoryDomain extends AbstractDescribableImpl<ActiveDirecto
 
     public Secret bindPassword;
 
+    /**
+     * Active directory site (which specifies the physical concentration of the
+     * servers), if any. If the value is non-null, we'll only contact servers in
+     * this site.
+     *
+     * <p>
+     * On Windows, I'm assuming ADSI takes care of everything automatically.
+     */
+    public String site;
+
     public ActiveDirectoryDomain(String name, String servers) {
-        this(name, servers, null, null);
+        this(name, servers, null, null, null);
     }
 
     @DataBoundConstructor
-    public ActiveDirectoryDomain(String name, String servers, String bindName, String bindPassword) {
+    public ActiveDirectoryDomain(String name, String servers, String site, String bindName, String bindPassword) {
         this.name = name;
         // Append default port if not specified
         servers = fixEmpty(servers);
@@ -93,6 +103,7 @@ public class ActiveDirectoryDomain extends AbstractDescribableImpl<ActiveDirecto
             servers = StringUtils.join(serversArray, ",");
         }
         this.servers = servers;
+        this.site = site;
         this.bindName = fixEmpty(bindName);
         this.bindPassword = Secret.fromString(fixEmpty(bindPassword));
     }
@@ -105,6 +116,11 @@ public class ActiveDirectoryDomain extends AbstractDescribableImpl<ActiveDirecto
     @Restricted(NoExternalUse.class)
     public String getServers() {
         return servers;
+    }
+
+    @Restricted(NoExternalUse.class)
+    public String getSite() {
+        return site;
     }
 
     @Restricted(NoExternalUse.class)

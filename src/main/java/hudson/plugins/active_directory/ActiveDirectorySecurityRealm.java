@@ -138,8 +138,12 @@ public class ActiveDirectorySecurityRealm extends AbstractPasswordBasedSecurityR
      * 
      * <p>
      * On Windows, I'm assuming ADSI takes care of everything automatically.
+     *
+     * <p>
+     * We need to keep this as transient in order to be able to use readResolve
+     * to migrate the old descriptor to the newone.
      */
-    public final String site;
+    public transient String site;
 
     /**
      * Represent the old bindName
@@ -319,6 +323,7 @@ public class ActiveDirectorySecurityRealm extends AbstractPasswordBasedSecurityR
             for (ActiveDirectoryDomain activeDirectoryDomain : this.getDomains()) {
                 activeDirectoryDomain.bindName = bindName;
                 activeDirectoryDomain.bindPassword = bindPassword;
+                activeDirectoryDomain.site = site;
             }
         }
         return this;
@@ -349,6 +354,7 @@ public class ActiveDirectorySecurityRealm extends AbstractPasswordBasedSecurityR
 
                 for (ActiveDirectoryDomain domain : domains) {
 	                try {
+                        String site = domain.getSite();
 	                    pw.println("Domain= " + domain.getName() + " site= "+ site);
 	                    List<SocketInfo> ldapServers = descriptor.obtainLDAPServer(domain.getName(), site, domain.getServers());
 	                    pw.println("List of domain controllers: "+ldapServers);
