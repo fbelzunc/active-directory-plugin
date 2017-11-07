@@ -102,7 +102,7 @@ public class TheFlintstonesTest {
 
     @Test
     public void simpleLoginSuccessful() throws Exception {
-        UserDetails userDetails = j.jenkins.getSecurityRealm().loadUserByUsername("Fred");
+        UserDetails userDetails = j.jenkins.getSecurityRealm().loadUserByUsername("FredERICO");
         assertThat(userDetails.getUsername(), is("Fred"));
     }
 
