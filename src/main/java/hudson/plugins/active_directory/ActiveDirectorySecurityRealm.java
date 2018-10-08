@@ -133,7 +133,7 @@ public class ActiveDirectorySecurityRealm extends AbstractPasswordBasedSecurityR
      * List of {@link ActiveDirectoryDomain}
      *
      */
-    public List<ActiveDirectoryDomain> domains;
+    public transient List<ActiveDirectoryDomain> domains;
 
     /**
      * Active directory site (which specifies the physical concentration of the
@@ -147,7 +147,7 @@ public class ActiveDirectorySecurityRealm extends AbstractPasswordBasedSecurityR
      * We need to keep this as transient in order to be able to use readResolve
      * to migrate the old descriptor to the newone.
      */
-    public transient final String site;
+    public transient final String site = null;
 
     /**
      * Represent the old bindName
@@ -177,9 +177,9 @@ public class ActiveDirectorySecurityRealm extends AbstractPasswordBasedSecurityR
      * If true enable startTls in case plain communication is used. In case the plugin
      * is configured to use TLS then this option will not have any impact.
      */
-    public Boolean startTls;
+    public transient Boolean startTls;
 
-    private GroupLookupStrategy groupLookupStrategy;
+    private transient GroupLookupStrategy groupLookupStrategy;
 
     /**
      * If true, Jenkins ignores Active Directory groups that are not being used by the active Authorization Strategy.
@@ -187,17 +187,17 @@ public class ActiveDirectorySecurityRealm extends AbstractPasswordBasedSecurityR
      * but a small number of corresponding rules defined by the Authorization Strategy.
      * Groups are considered as used if they are returned by {@link AuthorizationStrategy#getGroups()}.
      */
-    public final boolean removeIrrelevantGroups;
+    public transient final boolean removeIrrelevantGroups = false;
 
     /**
      *  Cache of the Active Directory plugin
      */
-    protected CacheConfiguration cache;
+    protected transient CacheConfiguration cache;
 
     /**
      *  Ldap extra properties
      */
-    protected List<EnvironmentProperty> environmentProperties;
+    protected transient List<EnvironmentProperty> environmentProperties;
 
     /**
      * Selects the SSL strategy to follow on the TLS connections
@@ -209,12 +209,12 @@ public class ActiveDirectorySecurityRealm extends AbstractPasswordBasedSecurityR
      * <p>
      *     For the moment there are two possible values: trustAllCertificates and trustStore.
      */
-    protected TlsConfiguration tlsConfiguration;
+    protected transient TlsConfiguration tlsConfiguration;
 
     /**
      *  The Jenkins internal user to fall back in case f {@link NamingException}
      */
-    protected ActiveDirectoryInternalUsersDatabase internalUsersDatabase;
+    protected transient ActiveDirectoryInternalUsersDatabase internalUsersDatabase;
 
     /**
      * The threadPool to update the cache on background
@@ -249,24 +249,25 @@ public class ActiveDirectorySecurityRealm extends AbstractPasswordBasedSecurityR
         this(domain, domains, site, bindName, bindPassword, server, groupLookupStrategy, removeIrrelevantGroups, customDomain, cache, startTls, tlsConfiguration, null);
     }
 
-    @DataBoundConstructor
-    // as Java signature, this binding doesn't make sense, so please don't use this constructor
     public ActiveDirectorySecurityRealm(String domain, List<ActiveDirectoryDomain> domains, String site, String bindName,
                                         String bindPassword, String server, GroupLookupStrategy groupLookupStrategy, boolean removeIrrelevantGroups, Boolean customDomain, CacheConfiguration cache, Boolean startTls, TlsConfiguration tlsConfiguration, ActiveDirectoryInternalUsersDatabase internalUsersDatabase) {
-        if (customDomain!=null && !customDomain)
-            domains = null;
-        this.domain = fixEmpty(domain);
-        this.server = fixEmpty(server);
+        this(domains);
+
+        // For the moment I am not sure how to inject this
+        /*for (ActiveDirectoryDomain activeDirectoryDomain : domains) {
+            activeDirectoryDomain.setGroupLookupStrategy(groupLookupStrategy);
+            activeDirectoryDomain.setRemoveIrrelevantGroups(removeIrrelevantGroups);
+            activeDirectoryDomain.setCache(cache);
+            activeDirectoryDomain.setStartTls(startTls);
+            activeDirectoryDomain.setTlsConfiguration(tlsConfiguration);
+            activeDirectoryDomain.setInternalUsersDatabase(internalUsersDatabase);;
+        }*/
+    }
+
+    @DataBoundConstructor
+    // as Java signature, this binding doesn't make sense, so please don't use this constructor
+    public ActiveDirectorySecurityRealm(List<ActiveDirectoryDomain> domains) {
         this.domains = domains;
-        this.site = fixEmpty(site);
-        this.bindName = fixEmpty(bindName);
-        this.bindPassword = Secret.fromString(fixEmpty(bindPassword));
-        this.groupLookupStrategy = groupLookupStrategy;
-        this.removeIrrelevantGroups = removeIrrelevantGroups;
-        this.cache = cache;
-        this.tlsConfiguration = tlsConfiguration;
-        this.startTls = startTls;
-        this.internalUsersDatabase = internalUsersDatabase;
     }
 
     @DataBoundSetter
@@ -504,7 +505,7 @@ public class ActiveDirectorySecurityRealm extends AbstractPasswordBasedSecurityR
             }
         }
 
-        public ListBoxModel doFillSizeItems() {
+        /*public ListBoxModel doFillSizeItems() {
             ListBoxModel listBoxModel = new ListBoxModel();
             listBoxModel.add("10 elements", "10");
             listBoxModel.add("20 elements", "20");
@@ -544,7 +545,7 @@ public class ActiveDirectorySecurityRealm extends AbstractPasswordBasedSecurityR
                 model.add(tlsConfiguration.getDisplayName(),tlsConfiguration.name());
             }
             return model;
-        }
+        }*/
 
         private boolean isTrustAllCertificatesEnabled(TlsConfiguration tlsConfiguration) {
             return (tlsConfiguration == null || TlsConfiguration.TRUST_ALL_CERTIFICATES.equals(tlsConfiguration));
@@ -589,7 +590,7 @@ public class ActiveDirectorySecurityRealm extends AbstractPasswordBasedSecurityR
 
             for (SocketInfo ldapServer : ldapServers) {
                 try {
-                    LdapContext context = bind(principalName, password, ldapServer, newProps);
+                    LdapContext context = bind(principalName, password, ldapServer, newProps, tlsConfiguration);
                     LOGGER.fine("Bound to " + ldapServer);
                     return context;
                 } catch (javax.naming.AuthenticationException e) {

@@ -1,0 +1,26 @@
+<?jelly escape-by-default='true'?>
+<j:jelly xmlns:j="jelly:core" xmlns:st="jelly:stapler" xmlns:d="jelly:define" xmlns:l="/lib/layout" xmlns:t="/lib/hudson" xmlns:f="/lib/form">
+    <table width="100%">
+      <br/>
+      <f:entry title="${%Domain Name}" field="name" help="/plugin/active-directory/help/domain-name-unix.html">
+        <f:textbox />
+      </f:entry>
+      <f:entry title="${%Domain controller}" field="servers">
+        <f:textbox />
+      </f:entry>
+      <f:entry field="site" title="${%Site}" help="/plugin/active-directory/help/help-site.html">
+        <f:textbox />
+      </f:entry>
+      <f:entry field="bindName" title="${%Bind DN}" help="/plugin/active-directory/help/help-bindName.html">
+        <f:textbox />
+      </f:entry>
+      <f:entry field="bindPassword" title="${%Bind Password}">
+        <f:password />
+      </f:entry>
+      <st:include page="configAdvanced.jelly" class="${descriptor.clazz}"/>
+      <st:include page="configCache.jelly" class="${descriptor.clazz}"/>
+      <f:nested>
+        <f:validateButton with="name,servers,site,bindName,bindPassword,startTls,groupLookupStrategy,internalUsersDatabase,removeIrrelevantGroups,tlsConfiguration,environmentProperties" title="${%Test Domain}" method="validateTest"/>
+      </f:nested>
+    </table>
+</j:jelly>

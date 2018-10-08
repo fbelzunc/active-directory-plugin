@@ -29,7 +29,9 @@ import hudson.Functions;
 import hudson.model.AbstractDescribableImpl;
 import hudson.model.Descriptor;
 import hudson.model.Hudson;
+import hudson.security.AuthorizationStrategy;
 import hudson.util.FormValidation;
+import hudson.util.ListBoxModel;
 import hudson.util.Secret;
 import org.acegisecurity.BadCredentialsException;
 import org.apache.commons.lang.StringUtils;
@@ -105,6 +107,49 @@ public class ActiveDirectoryDomain extends AbstractDescribableImpl<ActiveDirecto
 
     public Secret bindPassword;
 
+    /**
+     * If true enable startTls in case plain communication is used. In case the plugin
+     * is configured to use TLS then this option will not have any impact.
+     */
+    public Boolean startTls;
+
+    private GroupLookupStrategy groupLookupStrategy;
+
+    /**
+     * If true, Jenkins ignores Active Directory groups that are not being used by the active Authorization Strategy.
+     * This can significantly improve performance in environments with a large number of groups
+     * but a small number of corresponding rules defined by the Authorization Strategy.
+     * Groups are considered as used if they are returned by {@link AuthorizationStrategy#getGroups()}.
+     */
+    public boolean removeIrrelevantGroups;
+
+    /**
+     *  Cache of the Active Directory plugin
+     */
+    protected CacheConfiguration cache;
+
+    /**
+     *  Ldap extra properties
+     */
+    protected List<ActiveDirectorySecurityRealm.EnvironmentProperty> environmentProperties;
+
+    /**
+     * Selects the SSL strategy to follow on the TLS connections
+     *
+     * <p>
+     *     Even if we are not using any of the TLS ports (3269/636) the plugin will try to establish a TLS channel
+     *     using startTLS. Because of this, we need to be able to specify the SSL strategy on the plugin
+     *
+     * <p>
+     *     For the moment there are two possible values: trustAllCertificates and trustStore.
+     */
+    protected TlsConfiguration tlsConfiguration;
+
+    /**
+     *  The Jenkins internal user to fall back in case f {@link NamingException}
+     */
+    protected ActiveDirectoryInternalUsersDatabase internalUsersDatabase;
+
     // domain name prefixes
     // see http://technet.microsoft.com/en-us/library/cc759550(WS.10).aspx
     public enum Catalog {
@@ -122,12 +167,21 @@ public class ActiveDirectoryDomain extends AbstractDescribableImpl<ActiveDirecto
         }
     }
 
+    @Deprecated
     public ActiveDirectoryDomain(String name, String servers) {
         this(name, servers, null, null, null);
     }
 
-    @DataBoundConstructor
+    @Deprecated
     public ActiveDirectoryDomain(String name, String servers, String site, String bindName, String bindPassword) {
+        this(name, servers, site, bindName, bindPassword, new Boolean("true"), GroupLookupStrategy.AUTO, false, null, null, TlsConfiguration.JDK_TRUSTSTORE, null);
+    }
+
+    @DataBoundConstructor
+    public ActiveDirectoryDomain(String name, String servers, String site, String bindName, String bindPassword, Boolean startTls,
+                                 GroupLookupStrategy groupLookupStrategy, boolean removeIrrelevantGroups, CacheConfiguration cache,
+                                 List<ActiveDirectorySecurityRealm.EnvironmentProperty> environmentProperties, TlsConfiguration tlsConfiguration,
+                                 ActiveDirectoryInternalUsersDatabase internalUsersDatabase) {
         this.name = name;
         // Append default port if not specified
         servers = fixEmpty(servers);
@@ -144,6 +198,14 @@ public class ActiveDirectoryDomain extends AbstractDescribableImpl<ActiveDirecto
         this.site = fixEmpty(site);
         this.bindName = fixEmpty(bindName);
         this.bindPassword = Secret.fromString(fixEmpty(bindPassword));
+        // Make advanced settings independients of each domain
+        this.startTls = startTls;
+        this.groupLookupStrategy = groupLookupStrategy;
+        this.removeIrrelevantGroups = removeIrrelevantGroups;
+        this.cache = cache;
+        this.environmentProperties = environmentProperties;
+        this.tlsConfiguration = tlsConfiguration;
+        this.internalUsersDatabase = internalUsersDatabase;
     }
 
     @Restricted(NoExternalUse.class)
@@ -169,6 +231,77 @@ public class ActiveDirectoryDomain extends AbstractDescribableImpl<ActiveDirecto
     @Restricted(NoExternalUse.class)
     public String getSite() {
         return site;
+    }
+
+    @Restricted(NoExternalUse.class)
+    public Boolean getStartTls() {
+        return startTls;
+    }
+
+    @Restricted(NoExternalUse.class)
+    public GroupLookupStrategy getGroupLookupStrategy() {
+        return groupLookupStrategy;
+    }
+
+    @Restricted(NoExternalUse.class)
+    public boolean isRemoveIrrelevantGroups() {
+        return removeIrrelevantGroups;
+    }
+
+    @Restricted(NoExternalUse.class)
+    public CacheConfiguration getCache() {
+        return cache;
+    }
+
+    @Restricted(NoExternalUse.class)
+    public List<ActiveDirectorySecurityRealm.EnvironmentProperty> getEnvironmentProperties() {
+        return environmentProperties;
+    }
+
+    @Restricted(NoExternalUse.class)
+    public TlsConfiguration getTlsConfiguration() {
+        return tlsConfiguration;
+    }
+
+    @Restricted(NoExternalUse.class)
+    public ActiveDirectoryInternalUsersDatabase getInternalUsersDatabase() {
+        return internalUsersDatabase;
+    }
+
+    public Integer getSize() {
+        return cache == null ? null : cache.getSize();
+    }
+
+    public Integer getTtl() {
+        return cache == null ? null : cache.getTtl();
+    }
+
+    public void setStartTls(Boolean startTls) {
+        this.startTls = startTls;
+    }
+
+    public void setGroupLookupStrategy(GroupLookupStrategy groupLookupStrategy) {
+        this.groupLookupStrategy = groupLookupStrategy;
+    }
+
+    public void setRemoveIrrelevantGroups(boolean removeIrrelevantGroups) {
+        this.removeIrrelevantGroups = removeIrrelevantGroups;
+    }
+
+    public void setCache(CacheConfiguration cache) {
+        this.cache = cache;
+    }
+
+    public void setEnvironmentProperties(List<ActiveDirectorySecurityRealm.EnvironmentProperty> environmentProperties) {
+        this.environmentProperties = environmentProperties;
+    }
+
+    public void setTlsConfiguration(TlsConfiguration tlsConfiguration) {
+        this.tlsConfiguration = tlsConfiguration;
+    }
+
+    public void setInternalUsersDatabase(ActiveDirectoryInternalUsersDatabase internalUsersDatabase) {
+        this.internalUsersDatabase = internalUsersDatabase;
     }
 
     /**
@@ -242,9 +375,68 @@ public class ActiveDirectoryDomain extends AbstractDescribableImpl<ActiveDirecto
     @Extension
     public static class DescriptorImpl extends Descriptor<ActiveDirectoryDomain> {
         public String getDisplayName() { return ""; }
+
+        public ListBoxModel doFillGroupLookupStrategyItems() {
+            ListBoxModel model = new ListBoxModel();
+            for (GroupLookupStrategy e : GroupLookupStrategy.values()) {
+                model.add(e.getDisplayName(),e.name());
+            }
+            return model;
+        }
+
+        public ListBoxModel doFillTlsConfigurationItems() {
+            ListBoxModel model = new ListBoxModel();
+            for (TlsConfiguration tlsConfiguration : TlsConfiguration.values()) {
+                model.add(tlsConfiguration.getDisplayName(),tlsConfiguration.name());
+            }
+            return model;
+        }
+
+        public ListBoxModel doFillSizeItems() {
+            ListBoxModel listBoxModel = new ListBoxModel();
+            listBoxModel.add("10 elements", "10");
+            listBoxModel.add("20 elements", "20");
+            listBoxModel.add("50 elements", "50");
+            listBoxModel.add("100 elements", "100");
+            listBoxModel.add("200 elements", "200");
+            listBoxModel.add("256 elements", "256");
+            listBoxModel.add("500 elements", "500");
+            listBoxModel.add("1000 elements", "1000");
+            return listBoxModel;
+        }
+
+        public ListBoxModel doFillTtlItems() {
+            ListBoxModel listBoxModel = new ListBoxModel();
+            listBoxModel.add("30 sec", "30");
+            listBoxModel.add("1 min", "60");
+            listBoxModel.add("5 min", "300");
+            listBoxModel.add("10 min", "600");
+            listBoxModel.add("15 min", "900");
+            listBoxModel.add("30 min", "1800");
+            listBoxModel.add("1 hour", "3600");
+
+            return listBoxModel;
+        }
         
         public FormValidation doValidateTest(@QueryParameter(fixEmpty = true) String name, @QueryParameter(fixEmpty = true) String servers, @QueryParameter(fixEmpty = true) String site, @QueryParameter(fixEmpty = true) String bindName,
-                                             @QueryParameter(fixEmpty = true) String bindPassword) throws IOException, ServletException, NamingException {
+                                             @QueryParameter(fixEmpty = true) String bindPassword, @QueryParameter Boolean startTls, @QueryParameter GroupLookupStrategy groupLookupStrategy, @QueryParameter boolean removeIrrelevantGroups,
+                                             /*@QueryParameter CacheConfiguration cache,*/ /*@QueryParameter ActiveDirectorySecurityRealm.EnvironmentProperty environmentProperty,*/ @QueryParameter TlsConfiguration tlsConfiguration/*,
+                                             @QueryParameter ActiveDirectoryInternalUsersDatabase internalUsersDatabase*/) throws IOException, ServletException, NamingException {
+
+            //DirContext context = activeDirectorySecurityRealm.getDescriptor().bind(bindName, Secret.toString(password), obtainerServers);
+                        /*this.servers = servers;
+                        this.site = fixEmpty(site);
+                        this.bindName = fixEmpty(bindName);
+                        this.bindPassword = Secret.fromString(fixEmpty(bindPassword));
+                        // Make advanced settings independients of each domain
+                        this.startTls = startTls;
+                        this.groupLookupStrategy = groupLookupStrategy;
+                        this.removeIrrelevantGroups = removeIrrelevantGroups;
+                        this.cache = cache;
+                        this.environmentProperties = environmentProperties;
+                        this.tlsConfiguration = tlsConfiguration;
+                        this.internalUsersDatabase = internalUsersDatabase;*/
+
 
             // Create a fake ActiveDirectorySecurityRealm
             ActiveDirectorySecurityRealm activeDirectorySecurityRealm = new ActiveDirectorySecurityRealm(name, site, bindName, bindPassword, servers);
@@ -302,7 +494,7 @@ public class ActiveDirectoryDomain extends AbstractDescribableImpl<ActiveDirecto
                 if (bindName != null) {
                     // Make sure the bind actually works
                     try {
-                        DirContext context = activeDirectorySecurityRealm.getDescriptor().bind(bindName, Secret.toString(password), obtainerServers);
+                        DirContext context = activeDirectorySecurityRealm.getDescriptor().bind(bindName, Secret.toString(password), obtainerServers, new Hashtable<String, String>(), tlsConfiguration);
                         try {
                             // Actually do a search to make sure the credential is valid
                             Attributes userAttributes = new LDAPSearchBuilder(context, toDC(name)).subTreeScope().searchOne("(objectClass=user)");
