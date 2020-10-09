@@ -403,13 +403,13 @@ public class ActiveDirectorySecurityRealm extends AbstractPasswordBasedSecurityR
                 for (ActiveDirectoryDomain domain : domains) {
 	                try {
 	                    pw.println("Domain= " + domain.getName() + " site= "+ domain.getSite());
-	                    List<SocketInfo> ldapServers = descriptor.obtainLDAPServer(domain);
+	                    List<SocketInfo> ldapServers = domain.obtainLDAPServer();
 	                    pw.println("List of domain controllers: "+ldapServers);
 	                    
 	                    for (SocketInfo ldapServer : ldapServers) {
 	                        pw.println("Trying a domain controller at "+ldapServer);
 	                        try {
-	                            UserDetails d = p.retrieveUser(username, password, domain, Collections.singletonList(ldapServer));
+	                            UserDetails d = p.retrieveUser(username, password, domain);
 	                            pw.println("Authenticated as "+d);
 	                        } catch (AuthenticationException e) {
 	                            e.printStackTrace(pw);
@@ -504,18 +504,16 @@ public class ActiveDirectorySecurityRealm extends AbstractPasswordBasedSecurityR
 
         private static boolean WARNED = false;
 
-        @Deprecated
-        public DirContext bind(String principalName, String password, List<SocketInfo> ldapServers, Hashtable<String, String> props) throws NamingException {
-            return bind(principalName, password, ldapServers, props, TlsConfiguration.TRUST_ALL_CERTIFICATES);
-        }
-
         /**
          * Binds to the server using the specified username/password.
          * <p>
          * In a real deployment, often there are servers that don't respond or
          * otherwise broken, so try all the servers.
          */
-        public DirContext bind(String principalName, String password, List<SocketInfo> ldapServers, Hashtable<String, String> props, TlsConfiguration tlsConfiguration) throws NamingException {
+        public DirContext bind(String principalName, String password, ActiveDirectoryDomain activeDirectoryDomain, Hashtable<String, String> props) throws NamingException {
+            List<SocketInfo> ldapServers = activeDirectoryDomain.obtainLDAPServer();
+            TlsConfiguration tlsConfiguration = activeDirectoryDomain.getTlsConfiguration();
+
             // in a AD forest, it'd be mighty nice to be able to login as "joe"
             // as opposed to "joe@europe",
             // but the bind operation doesn't appear to allow me to do so.
@@ -532,7 +530,7 @@ public class ActiveDirectorySecurityRealm extends AbstractPasswordBasedSecurityR
 
             newProps.put("java.naming.ldap.attributes.binary","tokenGroups objectSid");
 
-            if (FORCE_LDAPS && isTrustAllCertificatesEnabled(tlsConfiguration)) {
+            if (activeDirectoryDomain.isLdaps() && isTrustAllCertificatesEnabled(tlsConfiguration)) {
                 newProps.put("java.naming.ldap.factory.socket", TrustAllSocketFactory.class.getName());
             }
 
@@ -541,7 +539,7 @@ public class ActiveDirectorySecurityRealm extends AbstractPasswordBasedSecurityR
 
             for (SocketInfo ldapServer : ldapServers) {
                 try {
-                    LdapContext context = bind(principalName, password, ldapServer, newProps, tlsConfiguration);
+                    LdapContext context = bind(principalName, password, ldapServer, activeDirectoryDomain, props);
                     LOGGER.fine("Bound to " + ldapServer);
                     return context;
                 } catch (javax.naming.AuthenticationException e) {
@@ -567,65 +565,35 @@ public class ActiveDirectorySecurityRealm extends AbstractPasswordBasedSecurityR
             throw namingException;
         }
 
-        /**
-         * Binds to the server using the specified username/password.
-         * <p>
-         * In a real deployment, often there are servers that don't respond or
-         * otherwise broken, so try all the servers.
-         */
-        @Deprecated
-        public DirContext bind(String principalName, String password, List<SocketInfo> ldapServers) throws NamingException {
-            return bind(principalName, password, ldapServers, new Hashtable<String, String>());
-        }
-
-        private void customizeLdapProperty(Hashtable<String, String> props, String propName) {
-            String prop = System.getProperty(propName, null);
-            if (prop != null) {
-                props.put(propName, prop);
-            }
-        }
-        
-        /** Lookups for hardcoded LDAP properties if they are specified as System properties and uses them */
-        private void customizeLdapProperties(Hashtable<String, String> props) {
-             customizeLdapProperty(props, "com.sun.jndi.ldap.connect.timeout");
-             customizeLdapProperty(props, "com.sun.jndi.ldap.read.timeout");
-        }
-
         @SuppressFBWarnings(value = "UPM_UNCALLED_PRIVATE_METHOD", justification = "Deprecated method.It will removed at some point")
         @IgnoreJRERequirement
-        @Deprecated
-        private LdapContext bind(String principalName, String password, SocketInfo server, Hashtable<String, String> props) throws NamingException {
-            return bind(principalName, password, server, props, null);
-        }
-
-        @IgnoreJRERequirement
-        private LdapContext bind(String principalName, String password, SocketInfo server, Hashtable<String, String> props, TlsConfiguration tlsConfiguration) throws NamingException {
-            String ldapUrl = (FORCE_LDAPS?"ldaps://":"ldap://") + server + '/';
+        private LdapContext bind(String principalName, String password, SocketInfo server, ActiveDirectoryDomain activeDirectoryDomain, Hashtable<String, String> props) throws NamingException {
+            String ldapUrl = (activeDirectoryDomain.isLdaps()?"ldaps://":"ldap://") + server + '/';
             String oldName = Thread.currentThread().getName();
             Thread.currentThread().setName("Connecting to "+ldapUrl+" : "+oldName);
             LOGGER.fine("Connecting to " + ldapUrl);
             try {
                 props.put(Context.PROVIDER_URL, ldapUrl);
                 props.put("java.naming.ldap.version", "3");
-                
+
                 customizeLdapProperties(props);
-                
+
                 LdapContext context = (LdapContext)LdapCtxFactory.getLdapCtxInstance(ldapUrl, props);
 
                 boolean isStartTls = true;
                 SecurityRealm securityRealm = Jenkins.getActiveInstance().getSecurityRealm();
                 if (securityRealm instanceof ActiveDirectorySecurityRealm) {
                     ActiveDirectorySecurityRealm activeDirectorySecurityRealm = (ActiveDirectorySecurityRealm) securityRealm;
-                     isStartTls= activeDirectorySecurityRealm.isStartTls();
+                    isStartTls= activeDirectorySecurityRealm.isStartTls();
                 }
 
-                if (!FORCE_LDAPS && isStartTls) {
+                if (!activeDirectoryDomain.isLdaps() && isStartTls) {
                     // try to upgrade to TLS if we can, but failing to do so isn't fatal
                     // see http://download.oracle.com/javase/jndi/tutorial/ldap/ext/starttls.html
                     StartTlsResponse rsp = null;
                     try {
                         rsp = (StartTlsResponse)context.extendedOperation(new StartTlsRequest());
-                        if (isTrustAllCertificatesEnabled(tlsConfiguration)) {
+                        if (isTrustAllCertificatesEnabled(activeDirectoryDomain.tlsConfiguration)) {
                             rsp.negotiate((SSLSocketFactory)TrustAllSocketFactory.getDefault());
                         } else {
                             rsp.negotiate();
@@ -671,6 +639,19 @@ public class ActiveDirectorySecurityRealm extends AbstractPasswordBasedSecurityR
             }
         }
 
+        private void customizeLdapProperty(Hashtable<String, String> props, String propName) {
+            String prop = System.getProperty(propName, null);
+            if (prop != null) {
+                props.put(propName, prop);
+            }
+        }
+        
+        /** Lookups for hardcoded LDAP properties if they are specified as System properties and uses them */
+        private void customizeLdapProperties(Hashtable<String, String> props) {
+             customizeLdapProperty(props, "com.sun.jndi.ldap.connect.timeout");
+             customizeLdapProperty(props, "com.sun.jndi.ldap.read.timeout");
+        }
+
         /**
          * Creates {@link DirContext} for accessing DNS.
          */
@@ -679,117 +660,6 @@ public class ActiveDirectorySecurityRealm extends AbstractPasswordBasedSecurityR
             env.put(Context.INITIAL_CONTEXT_FACTORY, "com.sun.jndi.dns.DnsContextFactory");
             env.put("java.naming.provider.url", "dns:");
             return new InitialDirContext(env);
-        }
-
-        @Deprecated
-        public List<SocketInfo> obtainLDAPServer(String domainName, String site, String preferredServer) throws NamingException {
-            return obtainLDAPServer(createDNSLookupContext(), domainName, site, preferredServer);
-        }
-
-        public List<SocketInfo> obtainLDAPServer(ActiveDirectoryDomain activeDirectoryDomain) throws NamingException {
-            return obtainLDAPServer(createDNSLookupContext(), activeDirectoryDomain.getName(), activeDirectoryDomain.getSite(), activeDirectoryDomain.getServers());
-        }
-
-        /**
-         * Use DNS and obtains the LDAP servers that we should try.
-         *
-         * @param preferredServers
-         *      If non-null, these servers are reported instead of doing the discovery.
-         *      In previous versions, this was simply added on top of the auto-discovered list, but this option
-         *      is useful when you have many domain controllers (because a single mistyped password can cause
-         *      an authentication attempt with every listed server, which can lock the user out!) This also
-         *      puts this feature in alignment with {@link #DOMAIN_CONTROLLERS}, which seems to indicate that
-         *      there are users who prefer this behaviour.
-         *
-         * @return A list with at least one item.
-         */
-        public List<SocketInfo> obtainLDAPServer(DirContext ictx, String domainName, String site, String preferredServers) throws NamingException {
-            List<SocketInfo> result = new ArrayList<>();
-            if (preferredServers==null || preferredServers.isEmpty())
-                preferredServers = DOMAIN_CONTROLLERS;
-
-            if (preferredServers!=null) {
-                for (String token : preferredServers.split(",")) {
-                    result.add(new SocketInfo(token.trim()));
-                }
-                return result;
-            }
-
-
-            String ldapServer = null;
-            Attribute a = null;
-            NamingException failure = null;
-
-            // try global catalog if it exists first, then the particular domain
-            for (ActiveDirectoryDomain.Catalog catalog : ActiveDirectoryDomain.Catalog.values()) {
-                ldapServer = catalog + (site!=null ? site + "._sites." : "") + domainName;
-                LOGGER.fine("Attempting to resolve " + ldapServer + " to SRV record");
-                try {
-                    Attributes attributes = ictx.getAttributes(ldapServer, new String[] { "SRV" });
-                    a = attributes.get("SRV");
-                    if (a!=null)
-                        break;
-                } catch (NamingException e) {
-                    // failed retrieval. try next option.
-                    failure = e;
-                } catch (NumberFormatException x) {
-                    failure = (NamingException) new NamingException("JDK IPv6 bug encountered").initCause(x);
-                }
-            }
-
-            if (a!=null) {
-                // discover servers
-                class PrioritizedSocketInfo implements Comparable<PrioritizedSocketInfo> {
-                    SocketInfo socket;
-                    int priority;
-
-                    PrioritizedSocketInfo(SocketInfo socket, int priority) {
-                        this.socket = socket;
-                        this.priority = priority;
-                    }
-
-                    @SuppressFBWarnings(value = "EQ_COMPARETO_USE_OBJECT_EQUALS", justification = "Weird and unpredictable behaviour intentional for load balancing.")
-                    public int compareTo(PrioritizedSocketInfo that) {
-                        return that.priority - this.priority; // sort them so that bigger priority comes first
-                    }
-                }
-                List<PrioritizedSocketInfo> plist = new ArrayList<>();
-                for (NamingEnumeration ne = a.getAll(); ne.hasMoreElements();) {
-                    String record = ne.next().toString();
-                    LOGGER.fine("SRV record found: "+record);
-                    String[] fields = record.split(" ");
-                    // fields[1]: weight
-                    // fields[2]: port
-                    // fields[3]: target host name
-
-                    String hostName = fields[3];
-                    // cut off trailing ".". JENKINS-2647
-                    if (hostName.endsWith("."))
-                        hostName = hostName.substring(0, hostName.length()-1);
-                    int port = Integer.parseInt(fields[2]);
-                    if (FORCE_LDAPS) {
-                        // map to LDAPS ports. I don't think there's any SRV records specifically for LDAPS.
-                        // I think Microsoft considers LDAP+TLS the way to go, or else there should have been
-                        // separate SRV entries.
-                        if (port==389)  port=636;
-                        if (port==3268) port=3269;
-                    }
-                    int p = Integer.parseInt(fields[0]);
-                    plist.add(new PrioritizedSocketInfo(new SocketInfo(hostName, port),p));
-                }
-                Collections.sort(plist);
-                for (PrioritizedSocketInfo psi : plist)
-                    result.add(psi.socket);
-            }
-
-            if (result.isEmpty()) {
-                NamingException x = new NamingException("No SRV record found for " + ldapServer);
-                if (failure!=null)  x.initCause(failure);
-                throw x;
-            }
-
-            LOGGER.fine(ldapServer + " resolved to " + result);
-            return result;
         }
     }
 

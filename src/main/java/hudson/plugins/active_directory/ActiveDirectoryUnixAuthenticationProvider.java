@@ -296,7 +296,7 @@ public class ActiveDirectoryUnixAuthenticationProvider extends AbstractActiveDir
             if (authentication!=null)
                 password = (String) authentication.getCredentials();
 
-            return retrieveUser(username, password, domain, obtainLDAPServers(domain));
+            return retrieveUser(username, password, domain);
         } finally {
             Thread.currentThread().setContextClassLoader(ccl);
         }
@@ -308,7 +308,7 @@ public class ActiveDirectoryUnixAuthenticationProvider extends AbstractActiveDir
      */
     private List<SocketInfo> obtainLDAPServers(ActiveDirectoryDomain domain) throws AuthenticationServiceException, NamingException {
         try {
-            return descriptor.obtainLDAPServer(domain);
+            return domain.obtainLDAPServer();
         } catch (NamingException e) {
             LOGGER.log(Level.WARNING, "Failed to find the LDAP service for the domain {0}", domain.getName());
             throw  e;
@@ -326,7 +326,7 @@ public class ActiveDirectoryUnixAuthenticationProvider extends AbstractActiveDir
      * @return never null
      */
     @SuppressFBWarnings(value = "ES_COMPARING_PARAMETER_STRING_WITH_EQ", justification = "Intentional instance check.")
-    public UserDetails retrieveUser(final String username, final String password, final ActiveDirectoryDomain domain, final List<SocketInfo> ldapServers) throws NamingException {
+    public UserDetails retrieveUser(final String username, final String password, final ActiveDirectoryDomain domain) throws NamingException {
         UserDetails userDetails;
         String hashKey = username + "@@" + DigestUtils.sha1Hex(password);
         final String bindName = domain.getBindName();
@@ -350,7 +350,7 @@ public class ActiveDirectoryUnixAuthenticationProvider extends AbstractActiveDir
                         // two step approach. Use a special credential to obtain DN for the
                         // user trying to login, then authenticate.
                         try {
-                            context = descriptor.bind(bindName, bindPassword, ldapServers, props, domain.getTlsConfiguration());
+                            context = descriptor.bind(bindName, bindPassword, domain, props);
                             anonymousBind = false;
                         } catch (NamingException e) {
                             if (activeDirectoryInternalUser !=null) {
@@ -366,7 +366,7 @@ public class ActiveDirectoryUnixAuthenticationProvider extends AbstractActiveDir
                         try {
                             // if we are just retrieving the user, try using anonymous bind by empty password (see RFC 2829 5.1)
                             // but if that fails, that's not BadCredentialException but UserMayOrMayNotExistException
-                            context = descriptor.bind(userPrincipalName, anonymousBind ? "" : password, ldapServers, props, domain.getTlsConfiguration());
+                            context = descriptor.bind(userPrincipalName, anonymousBind ? "" : password, domain, props);
                         } catch (BadCredentialsException e) {
                             if (anonymousBind)
                                 // in my observation, if we attempt an anonymous bind and AD doesn't allow it, it still passes the bind method
@@ -406,7 +406,7 @@ public class ActiveDirectoryUnixAuthenticationProvider extends AbstractActiveDir
                             // if we've used the credential specifically for the bind, we
                             // need to verify the provided password to do authentication
                             LOGGER.log(Level.FINE, "Attempting to validate password for DN={0}", dn);
-                            DirContext test = descriptor.bind(dnFormatted, password, ldapServers, props, domain.getTlsConfiguration());
+                            DirContext test = descriptor.bind(dnFormatted, password, domain, props);
                             // Binding alone is not enough to test the credential. Need to actually perform some query operation.
                             // but if the authentication fails this throws an exception
                             try {
@@ -524,7 +524,7 @@ public class ActiveDirectoryUnixAuthenticationProvider extends AbstractActiveDir
                                 ClassLoader ccl = Thread.currentThread().getContextClassLoader();
                                 Thread.currentThread().setContextClassLoader(getClass().getClassLoader());
                                 try {
-                                    DirContext context = descriptor.bind(domain.getBindName(), domain.getBindPassword().getPlainText(), obtainLDAPServers(domain), props, domain.getTlsConfiguration());
+                                    DirContext context = descriptor.bind(domain.getBindName(), domain.getBindPassword().getPlainText(), domain, props);
 
                                     try {
                                         final String domainDN = toDC(domain.getName());
@@ -816,7 +816,7 @@ public class ActiveDirectoryUnixAuthenticationProvider extends AbstractActiveDir
         }
     }
 
-    /*package*/ static String toDC(String domainName) {
+    /*packaged*/ static String toDC(String domainName) {
         StringBuilder buf = new StringBuilder();
         for (String token : domainName.split("\\.")) {
             if (token.length()==0)

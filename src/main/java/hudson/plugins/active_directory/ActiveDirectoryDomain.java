@@ -24,6 +24,7 @@ package hudson.plugins.active_directory;
  * THE SOFTWARE.
  */
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import hudson.Extension;
 import hudson.Functions;
 import hudson.model.AbstractDescribableImpl;
@@ -41,6 +42,7 @@ import org.kohsuke.stapler.QueryParameter;
 
 import javax.naming.CommunicationException;
 import javax.naming.Context;
+import javax.naming.NamingEnumeration;
 import javax.naming.NamingException;
 import javax.naming.ServiceUnavailableException;
 import javax.naming.directory.Attribute;
@@ -51,11 +53,13 @@ import javax.servlet.ServletException;
 import java.io.IOException;
 import java.io.Serializable;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Hashtable;
 import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
+import static hudson.plugins.active_directory.ActiveDirectorySecurityRealm.DOMAIN_CONTROLLERS;
 import static hudson.plugins.active_directory.ActiveDirectoryUnixAuthenticationProvider.toDC;
 
 /**
@@ -119,6 +123,8 @@ public class ActiveDirectoryDomain extends AbstractDescribableImpl<ActiveDirecto
      */
     protected TlsConfiguration tlsConfiguration;
 
+    protected TlsCommunicationConfiguration tlsCommunicationConfiguration;
+
     // domain name prefixes
     // see http://technet.microsoft.com/en-us/library/cc759550(WS.10).aspx
     public enum Catalog {
@@ -145,8 +151,13 @@ public class ActiveDirectoryDomain extends AbstractDescribableImpl<ActiveDirecto
         this(name, servers, site, bindName, bindPassword, TlsConfiguration.TRUST_ALL_CERTIFICATES);
     }
 
-    @DataBoundConstructor
+    @Deprecated
     public ActiveDirectoryDomain(String name, String servers, String site, String bindName, String bindPassword, TlsConfiguration tlsConfiguration) {
+        this(name, servers, site, bindName, bindPassword, TlsConfiguration.TRUST_ALL_CERTIFICATES, TlsCommunicationConfiguration.PLAIN_TEXT);
+    }
+
+    @DataBoundConstructor
+    public ActiveDirectoryDomain(String name, String servers, String site, String bindName, String bindPassword, TlsConfiguration tlsConfiguration, TlsCommunicationConfiguration tlsCommunicationConfiguration) {
         this.name = name;
         // Append default port if not specified
         servers = fixEmpty(servers);
@@ -164,6 +175,7 @@ public class ActiveDirectoryDomain extends AbstractDescribableImpl<ActiveDirecto
         this.bindName = fixEmpty(bindName);
         this.bindPassword = Secret.fromString(fixEmpty(bindPassword));
         this.tlsConfiguration = tlsConfiguration;
+        this.tlsCommunicationConfiguration = tlsCommunicationConfiguration;
     }
 
     @Restricted(NoExternalUse.class)
@@ -196,6 +208,17 @@ public class ActiveDirectoryDomain extends AbstractDescribableImpl<ActiveDirecto
         return tlsConfiguration;
     }
 
+    @Restricted(NoExternalUse.class)
+    public TlsCommunicationConfiguration getTlsCommunicationConfiguration() {
+        return tlsCommunicationConfiguration;
+    }
+
+    public boolean isLdaps() {
+        if (tlsCommunicationConfiguration != null && (tlsCommunicationConfiguration.equals(TlsCommunicationConfiguration.TLS) || ActiveDirectorySecurityRealm.FORCE_LDAPS)) {
+            return true;
+        }
+        return false;
+    }
     /**
      * Get the record from a domain
      *
@@ -262,6 +285,100 @@ public class ActiveDirectoryDomain extends AbstractDescribableImpl<ActiveDirecto
         return s;
     }
 
+    public List<SocketInfo> obtainLDAPServer() throws NamingException {
+        DirContext ictx = createDNSLookupContext();
+        String domainName = this.getName();
+        String site = this.getSite();
+        String preferredServers = this.getServers();
+
+        List<SocketInfo> result = new ArrayList<>();
+        if (preferredServers==null || preferredServers.isEmpty())
+            preferredServers = DOMAIN_CONTROLLERS;
+
+        if (preferredServers!=null) {
+            for (String token : preferredServers.split(",")) {
+                result.add(new SocketInfo(token.trim()));
+            }
+            return result;
+        }
+
+        String ldapServer = null;
+        Attribute a = null;
+        NamingException failure = null;
+
+        // try global catalog if it exists first, then the particular domain
+        for (ActiveDirectoryDomain.Catalog catalog : ActiveDirectoryDomain.Catalog.values()) {
+            ldapServer = catalog + (site!=null ? site + "._sites." : "") + domainName;
+            LOGGER.fine("Attempting to resolve " + ldapServer + " to SRV record");
+            try {
+                Attributes attributes = ictx.getAttributes(ldapServer, new String[] { "SRV" });
+                a = attributes.get("SRV");
+                if (a!=null)
+                    break;
+            } catch (NamingException e) {
+                // failed retrieval. try next option.
+                failure = e;
+            } catch (NumberFormatException x) {
+                failure = (NamingException) new NamingException("JDK IPv6 bug encountered").initCause(x);
+            }
+        }
+
+        if (a!=null) {
+            // discover servers
+            class PrioritizedSocketInfo implements Comparable<PrioritizedSocketInfo> {
+                SocketInfo socket;
+                int priority;
+
+                PrioritizedSocketInfo(SocketInfo socket, int priority) {
+                    this.socket = socket;
+                    this.priority = priority;
+                }
+
+                @SuppressFBWarnings(value = "EQ_COMPARETO_USE_OBJECT_EQUALS", justification = "Weird and unpredictable behaviour intentional for load balancing.")
+                public int compareTo(PrioritizedSocketInfo that) {
+                    return that.priority - this.priority; // sort them so that bigger priority comes first
+                }
+            }
+            List<PrioritizedSocketInfo> plist = new ArrayList<>();
+            for (NamingEnumeration ne = a.getAll(); ne.hasMoreElements();) {
+                String record = ne.next().toString();
+                LOGGER.fine("SRV record found: "+record);
+                String[] fields = record.split(" ");
+                // fields[1]: weight
+                // fields[2]: port
+                // fields[3]: target host name
+
+                String hostName = fields[3];
+                // cut off trailing ".". JENKINS-2647
+                if (hostName.endsWith("."))
+                    hostName = hostName.substring(0, hostName.length()-1);
+                int port = Integer.parseInt(fields[2]);
+                //if (FORCE_LDAPS) {
+                if(isLdaps()) {
+                    // map to LDAPS ports. I don't think there's any SRV records specifically for LDAPS.
+                    // I think Microsoft considers LDAP+TLS the way to go, or else there should have been
+                    // separate SRV entries.
+                    if (port==389)  port=636;
+                    if (port==3268) port=3269;
+                }
+                int p = Integer.parseInt(fields[0]);
+                plist.add(new PrioritizedSocketInfo(new SocketInfo(hostName, port),p));
+            }
+            Collections.sort(plist);
+            for (PrioritizedSocketInfo psi : plist)
+                result.add(psi.socket);
+        }
+
+        if (result.isEmpty()) {
+            NamingException x = new NamingException("No SRV record found for " + ldapServer);
+            if (failure!=null)  x.initCause(failure);
+            throw x;
+        }
+
+        LOGGER.fine(ldapServer + " resolved to " + result);
+        return result;
+    }
+
     @Extension
     public static class DescriptorImpl extends Descriptor<ActiveDirectoryDomain> {
         public String getDisplayName() { return ""; }
@@ -270,6 +387,14 @@ public class ActiveDirectoryDomain extends AbstractDescribableImpl<ActiveDirecto
             ListBoxModel model = new ListBoxModel();
             for (TlsConfiguration tlsConfiguration : TlsConfiguration.values()) {
                 model.add(tlsConfiguration.getDisplayName(),tlsConfiguration.name());
+            }
+            return model;
+        }
+
+        public ListBoxModel doFillTlsCommunicationConfigurationItems() {
+            ListBoxModel model = new ListBoxModel();
+            for (TlsCommunicationConfiguration tlsCommunicationConfiguration : TlsCommunicationConfiguration.values()) {
+                model.add(tlsCommunicationConfiguration.getDisplayName(),tlsCommunicationConfiguration.name());
             }
             return model;
         }
@@ -322,7 +447,7 @@ public class ActiveDirectoryDomain extends AbstractDescribableImpl<ActiveDirecto
                 DirContext ictx = activeDirectorySecurityRealm.getDescriptor().createDNSLookupContext();
                 List<SocketInfo> obtainerServers;
                 try {
-                    obtainerServers = activeDirectorySecurityRealm.getDescriptor().obtainLDAPServer(ictx, name, site, servers);
+                    obtainerServers = domain.obtainLDAPServer();
                 } catch (NamingException e) {
                     String msg = site == null ? "No LDAP server was found in " + name : "No LDAP server was found in the " + site + " site of " + name;
                     LOGGER.log(Level.WARNING, msg, e);
@@ -333,7 +458,7 @@ public class ActiveDirectoryDomain extends AbstractDescribableImpl<ActiveDirecto
                     // Make sure the bind actually works
                     try {
                         Hashtable<String, String> props = new Hashtable<>(0);
-                        DirContext context = activeDirectorySecurityRealm.getDescriptor().bind(bindName, Secret.toString(password), obtainerServers, props, tlsConfiguration);
+                        DirContext context = activeDirectorySecurityRealm.getDescriptor().bind(bindName, Secret.toString(password), domain, props);
                         try {
                             // Actually do a search to make sure the credential is valid
                             Attributes userAttributes = new LDAPSearchBuilder(context, toDC(name)).subTreeScope().searchOne("(objectClass=user)");

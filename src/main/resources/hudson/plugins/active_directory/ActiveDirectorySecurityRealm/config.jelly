@@ -60,7 +60,10 @@
             <f:entry field="bindPassword" title="${%Bind Password}">
               <f:password />
             </f:entry>
-            <f:entry field="tlsConfiguration" title="${%TLS Configuration}">
+            <f:entry field="tlsCommunicationConfiguration" title="${%TLS Communication Configuration}">
+              <f:select />
+            </f:entry>
+            <f:entry field="tlsConfiguration" title="${%TLS Certificate Configuration}">
               <f:select />
             </f:entry>
             <f:nested>
